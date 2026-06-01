@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Φορτιστές Η/Ο · Δημόσιο Δίκτυο Ελλάδας</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <!-- Fonts (με ελληνική υποστήριξη) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;900&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap&subset=greek" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="panel">
+      <div class="sheet-handle" id="sheet-handle"><span></span></div>
+      <header class="brand">
+        <div class="bolt">⚡</div>
+        <div>
+          <h1>ΦΟΡΤΙΣΤΕΣ Η/Ο</h1>
+          <p>Δημόσιο δίκτυο Ελλάδας · Μ.Υ.Φ.Α.Η.</p>
+        </div>
+      </header>
+
+      <div class="quick">
+        <button id="nearest-btn" class="primary qa">📍 Κοντινοί φορτιστές</button>
+        <button id="locate-btn" class="ghost qa-icon" title="Κεντράρισε στη θέση μου">◎</button>
+      </div>
+
+      <section class="block collapsible open">
+        <button class="acc-head" type="button">Ισχύς φόρτισης<span class="chev"></span></button>
+        <div class="acc-body">
+          <label class="toggle t-dc50">
+            <input type="checkbox" id="f-dc50" checked />
+            <span class="dot"></span>
+            <span class="lbl">Ταχυφορτιστές <b>50 kW</b> <em>(50–119)</em></span>
+            <span class="num" id="n-dc50">–</span>
+          </label>
+          <label class="toggle t-dc120">
+            <input type="checkbox" id="f-dc120" checked />
+            <span class="dot"></span>
+            <span class="lbl">Υπερ-ταχυφορτιστές <b>120 kW</b> <em>(≥120)</em></span>
+            <span class="num" id="n-dc120">–</span>
+          </label>
+          <label class="toggle t-ac">
+            <input type="checkbox" id="f-ac" />
+            <span class="dot"></span>
+            <span class="lbl">Αργοί / AC <em>(&lt;50)</em></span>
+            <span class="num" id="n-ac">–</span>
+          </label>
+          <label class="mini">
+            <input type="checkbox" id="f-avail" />
+            Μόνο διαθέσιμοι αυτή τη στιγμή
+          </label>
+        </div>
+      </section>
+
+      <section class="block collapsible">
+        <button class="acc-head" type="button">Όχημα &amp; μπαταρία<span class="chev"></span></button>
+        <div class="acc-body">
+          <div class="field">
+            <label for="car">Μοντέλο</label>
+            <select id="car"></select>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="batt">Μπαταρία (kWh)</label>
+              <input type="number" id="batt" min="5" max="250" step="0.5" />
+            </div>
+            <div class="field">
+              <label for="cons">Κατανάλωση<br />(kWh/100km)</label>
+              <input type="number" id="cons" min="8" max="45" step="0.5" />
+            </div>
+          </div>
+          <p class="hint" id="autonomy">Επίλεξε όχημα για υπολογισμό αυτονομίας.</p>
+          <div class="field">
+            <label for="soc">Εκκίνηση μπαταρίας: <span id="soc-val">100</span>%</label>
+            <input type="range" id="soc" min="10" max="100" value="100" step="5" />
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="target">Φόρτιση στο: <span id="target-val">20</span>%</label>
+              <input type="range" id="target" min="5" max="50" value="20" step="5" />
+            </div>
+            <div class="field">
+              <label for="chargeto">Φόρτιση έως: <span id="chargeto-val">80</span>%</label>
+              <input type="range" id="chargeto" min="50" max="100" value="80" step="5" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block collapsible open">
+        <button class="acc-head" type="button">Σχεδιασμός διαδρομής<span class="chev"></span></button>
+        <div class="acc-body">
+          <div class="field">
+            <label for="from">Αφετηρία</label>
+            <input type="text" id="from" placeholder="π.χ. Αθήνα, Σύνταγμα" autocomplete="off" />
+          </div>
+          <button id="use-loc" class="ghost loc">📍 Αφετηρία = η θέση μου</button>
+          <div class="field">
+            <label for="to">Προορισμός</label>
+            <input type="text" id="to" placeholder="π.χ. Θεσσαλονίκη" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="buffer">Απόσταση από διαδρομή: <span id="buffer-val">5</span> km</label>
+            <input type="range" id="buffer" min="1" max="25" value="5" step="1" />
+          </div>
+          <div class="row">
+            <button id="route-btn" class="primary">Σχεδίασε διαδρομή</button>
+            <button id="route-clear" class="ghost">Καθαρισμός</button>
+          </div>
+          <p class="hint" id="route-info"></p>
+          <button id="poi-btn" class="ghost poi">🏛️ Αξιοθέατα &amp; σημεία στη διαδρομή</button>
+        </div>
+      </section>
+
+      <section class="block grow results">
+        <h2>Αποτελέσματα <span id="route-count" class="badge hidden">0</span></h2>
+        <div id="results-empty" class="empty">
+          Πάτησε <b>«Κοντινοί φορτιστές»</b> για τα πλησιέστερα από τη θέση σου, ή
+          <b>σχεδίασε διαδρομή</b> για πλήρες πλάνο φόρτισης.
+        </div>
+        <div id="pois" class="pois"></div>
+        <div id="nearest" class="nearest"></div>
+        <div id="plan" class="plan hidden"></div>
+        <div id="route-list" class="route-list"></div>
+      </section>
+
+      <footer class="status">
+        <span id="data-status">Φόρτωση δεδομένων…</span>
+      </footer>
+    </aside>
+
+    <main id="map"></main>
+  </div>
+
+  <!-- Libraries -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
