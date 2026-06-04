@@ -330,49 +330,63 @@ const NOMINATIM_BASE = process.env.NOMINATIM_BASE || 'https://nominatim.openstre
 const OSRM_BASE = process.env.OSRM_BASE || 'https://router.project-osrm.org';
 const GEO_UA = 'EV-Chargers-GR/1.0 (+https://github.com/, Railway app)'; // για Nominatim policy
 
+// Βοηθοί OpenStreetMap/OSRM (fallback ή προεπιλογή χωρίς κλειδί)
+async function osmSearch(common) {
+  const r = await fetch(`${NOMINATIM_BASE}/search?${common}`, { headers: { 'User-Agent': GEO_UA, Accept: 'application/json' } });
+  if (!r.ok) return [];
+  const arr = await r.json();
+  return Array.isArray(arr) ? arr : [];
+}
+async function osmReverse(lat, lng) {
+  const r = await fetch(`${NOMINATIM_BASE}/reverse?format=json&zoom=12&accept-language=el&lat=${lat}&lon=${lng}`, { headers: { 'User-Agent': GEO_UA, Accept: 'application/json' } });
+  if (!r.ok) return {};
+  return ((await r.json()) || {}).address || {};
+}
+async function osrmRoute(path, qs) {
+  const r = await fetch(`${OSRM_BASE}/route/v1/${path}?${qs}`);
+  const d = await r.json();
+  if (d.code !== 'Ok' || !d.routes || !d.routes.length) return null;
+  return d.routes[0];
+}
+const normHit = (o) => ({ lat: parseFloat(o.lat), lng: parseFloat(o.lon), label: o.display_name });
+
+// LocationIQ με ασφαλές fallback σε OSM αν αποτύχει ή δεν βρει αποτέλεσμα.
+async function liqSearch(common) {
+  if (!LOCATIONIQ_KEY) return null; // σήμα «χρησιμοποίησε OSM»
+  try {
+    const r = await fetch(`${LOCATIONIQ_BASE}/v1/search?key=${LOCATIONIQ_KEY}&${common}`);
+    if (r.ok) { const arr = await r.json(); return Array.isArray(arr) ? arr : []; }
+    console.warn(`[geo] LocationIQ search HTTP ${r.status} — fallback σε Nominatim`);
+  } catch (e) { console.warn(`[geo] LocationIQ search σφάλμα (${e.message}) — fallback`); }
+  return null; // fallback
+}
+
 async function doGeocode(q) {
   if (!q) return null;
   const common = `format=json&limit=1&countrycodes=gr&accept-language=el&q=${encodeURIComponent(q)}`;
-  let arr;
-  if (LOCATIONIQ_KEY) {
-    const r = await fetch(`${LOCATIONIQ_BASE}/v1/search?key=${LOCATIONIQ_KEY}&${common}`);
-    if (!r.ok) throw new Error(`geocode HTTP ${r.status}`);
-    arr = await r.json();
-  } else {
-    const r = await fetch(`${NOMINATIM_BASE}/search?${common}`, { headers: { 'User-Agent': GEO_UA, Accept: 'application/json' } });
-    arr = await r.json();
-  }
-  if (!Array.isArray(arr) || !arr.length) return null;
-  return { lat: parseFloat(arr[0].lat), lng: parseFloat(arr[0].lon), label: arr[0].display_name };
+  let arr = await liqSearch(common);
+  if (arr === null || arr.length === 0) arr = await osmSearch(common); // fallback ή αν 0 αποτελέσματα
+  return arr && arr.length ? normHit(arr[0]) : null;
 }
 
-// Προτάσεις (autocomplete) — έως 5 υποψήφια μέρη για άρση αμφισημίας.
 async function doSuggest(q) {
   if (!q || q.trim().length < 2) return [];
   const common = `format=json&limit=5&dedupe=1&countrycodes=gr&accept-language=el&q=${encodeURIComponent(q)}`;
-  let arr;
-  if (LOCATIONIQ_KEY) {
-    const r = await fetch(`${LOCATIONIQ_BASE}/v1/search?key=${LOCATIONIQ_KEY}&${common}`);
-    if (!r.ok) throw new Error(`suggest HTTP ${r.status}`);
-    arr = await r.json();
-  } else {
-    const r = await fetch(`${NOMINATIM_BASE}/search?${common}`, { headers: { 'User-Agent': GEO_UA, Accept: 'application/json' } });
-    arr = await r.json();
-  }
-  if (!Array.isArray(arr)) return [];
-  return arr.map((o) => ({ lat: parseFloat(o.lat), lng: parseFloat(o.lon), label: o.display_name }));
+  let arr = await liqSearch(common);
+  if (arr === null || arr.length === 0) arr = await osmSearch(common);
+  return (arr || []).map(normHit);
 }
 
 async function doReverse(lat, lng) {
-  let addr = {};
+  let addr = null;
   if (LOCATIONIQ_KEY) {
-    const r = await fetch(`${LOCATIONIQ_BASE}/v1/reverse?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lng}&format=json&zoom=12&accept-language=el`);
-    if (!r.ok) throw new Error(`reverse HTTP ${r.status}`);
-    addr = (await r.json()).address || {};
-  } else {
-    const r = await fetch(`${NOMINATIM_BASE}/reverse?format=json&zoom=12&accept-language=el&lat=${lat}&lon=${lng}`, { headers: { 'User-Agent': GEO_UA, Accept: 'application/json' } });
-    addr = ((await r.json()) || {}).address || {};
+    try {
+      const r = await fetch(`${LOCATIONIQ_BASE}/v1/reverse?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lng}&format=json&zoom=12&accept-language=el`);
+      if (r.ok) addr = (await r.json()).address || {};
+      else console.warn(`[geo] LocationIQ reverse HTTP ${r.status} — fallback`);
+    } catch (e) { console.warn(`[geo] LocationIQ reverse σφάλμα (${e.message}) — fallback`); }
   }
+  if (!addr) addr = await osmReverse(lat, lng);
   const name = addr.city || addr.town || addr.village || addr.municipality || addr.county || addr.state_district || addr.state || null;
   return { name };
 }
@@ -381,13 +395,16 @@ async function doRoute(from, to) {
   // from/to σε μορφή "lng,lat"
   const path = `driving/${from};${to}`;
   const qs = 'overview=full&geometries=geojson';
-  let url;
-  if (LOCATIONIQ_KEY) url = `${LOCATIONIQ_BASE}/v1/directions/${path}?key=${LOCATIONIQ_KEY}&${qs}`;
-  else url = `${OSRM_BASE}/route/v1/${path}?${qs}`;
-  const r = await fetch(url);
-  const d = await r.json();
-  if (d.code !== 'Ok' || !d.routes || !d.routes.length) throw new Error('Δεν βρέθηκε διαδρομή.');
-  const rt = d.routes[0];
+  let rt = null;
+  if (LOCATIONIQ_KEY) {
+    try {
+      const r = await fetch(`${LOCATIONIQ_BASE}/v1/directions/${path}?key=${LOCATIONIQ_KEY}&${qs}`);
+      if (r.ok) { const d = await r.json(); if (d.code === 'Ok' && d.routes && d.routes.length) rt = d.routes[0]; }
+      else console.warn(`[geo] LocationIQ directions HTTP ${r.status} — fallback σε OSRM`);
+    } catch (e) { console.warn(`[geo] LocationIQ directions σφάλμα (${e.message}) — fallback`); }
+  }
+  if (!rt) rt = await osrmRoute(path, qs);
+  if (!rt) throw new Error('Δεν βρέθηκε διαδρομή.');
   return { distance: rt.distance, duration: rt.duration, geometry: rt.geometry };
 }
 
